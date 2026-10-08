@@ -1,268 +1,157 @@
-# opencode-v2-mcp
+# OpenCode 2 MCP
 
-*[Русская версия](README.md)*
+[中文](README.md) · [MIT License](LICENSE) · [Changelog](CHANGELOG.md)
 
-[![npm (npmjs.org)](https://img.shields.io/npm/v/opencode2-mcp?label=npmjs.org&color=cb3837)](https://www.npmjs.com/package/opencode2-mcp)
-[![GitHub Packages](https://img.shields.io/badge/GitHub%20Packages-%40yuriisamohvalov--creator%2Fopencode--v2--mcp-24292e?logo=github)](https://github.com/yuriisamohvalov-creator/opencode-mcp/pkgs/npm/opencode-v2-mcp)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+A stdio MCP bridge that lets Codex and other MCP clients run bounded tasks through a local OpenCode 2 installation. It exposes one tool: `opencode_execute`.
 
-An MCP server that lets **Claude Code, Codex CLI, Cursor-agent** (or any
-other MCP client) delegate bounded coding tasks to a local
-[OpenCode](https://opencode.ai) **v2.x** instance. It exposes a single
-tool — `opencode_execute` — which runs `opencode run --format json`, parses
-the NDJSON stream, and returns a compact report: response text,
-`git diff --stat`, `git status --short`, exit code, and `sessionID`.
-
-The server is built on the standard `@modelcontextprotocol/sdk` (stdio
-transport) — it is not tied to any specific client and works identically
-with any MCP-compatible host, no code changes needed. Connectivity with
-Claude Code, Codex CLI, and Cursor-agent has been verified live (see
-sections below).
-
-Based on the reference implementation from a community guide,
-"Claude Code Desktop → OpenCode v2 as a code-writing subagent," and
-patched with three fixes without which the wrapper does not work against
-a real `opencode v2.0.12` install (details in "Known ecosystem bugs"
-below).
-
-The full development history, diagnostics, and comparison against other
-community MCP wrappers (all of which fail against `opencode v2.x` for
-various reasons) live in `second-brain/opencode-subagent-mcp.md` (a
-personal note, not published).
+This is a public fork of [yuriisamohvalov-creator/opencode-mcp](https://github.com/yuriisamohvalov-creator/opencode-mcp). It preserves the upstream MIT license and history, adding native Windows executable discovery, read-only defaults, robust event parsing, error handling and process cleanup. See [NOTICE.md](NOTICE.md).
 
 ## Requirements
 
-- **OpenCode v2.x**, installed and available on `PATH` (`opencode --version`
-  should print `2.x`).
-- Node.js 18+.
-- A configured provider/model in OpenCode (`opencode auth login`,
-  `opencode auth list`).
-- The project where `opencode_execute` will run must contain an
-  `opencode.json` with a **JSON `agent` block** (see below — markdown
-  agent files `.opencode/agent/*.md` hang indefinitely on this version).
+- Node.js 22 or newer.
+- An installed OpenCode **2.x** CLI and a configured, available model. Live calls were verified on Windows with **2.0.22**. Smoke-test other versions before use.
+- An MCP client with stdio support, such as Codex.
 
-## Installation
+Automated tests use a fake CLI and require no model credentials, OpenCode installation or network. GitHub Actions runs a Windows/Linux/macOS matrix on Node 22 and 24; check Actions for current results.
 
-### Option 1 — from npm (npmjs.org, recommended)
+## Install from source
 
-Published as [`opencode2-mcp`](https://www.npmjs.com/package/opencode2-mcp)
-— fully public, installs with no authentication:
+PowerShell:
 
-```bash
-npm install -g opencode2-mcp
+```powershell
+git clone https://github.com/liuxiaofengone/opencode-mcp.git C:\tool\opencode-mcp
+Set-Location C:\tool\opencode-mcp
+git checkout v0.3.0
+npm ci --ignore-scripts
+npm test
+$nodeExe = (Get-Command node).Source
+$serverScript = (Resolve-Path .\server.mjs).Path
+codex mcp add opencode-v2 -- $nodeExe $serverScript
 ```
 
-### Option 2 — from source
+Linux/macOS:
 
-```bash
-git clone git@github.com:yuriisamohvalov-creator/opencode-mcp.git ~/tools/opencode-mcp
-cd ~/tools/opencode-mcp
-npm install
+```sh
+git clone https://github.com/liuxiaofengone/opencode-mcp.git
+cd opencode-mcp
+git checkout v0.3.0
+npm ci --ignore-scripts
+npm test
+codex mcp add opencode-v2 -- "$(command -v node)" "$PWD/server.mjs"
 ```
 
-### Option 3 — from GitHub Packages
+This fork is distributed through GitHub source. The npm `opencode2-mcp` package belongs to the upstream project and does not install this fork's changes.
 
-The same package is also mirrored on GitHub Packages as
-[`@yuriisamohvalov-creator/opencode-v2-mcp`](https://github.com/yuriisamohvalov-creator/opencode-mcp/pkgs/npm/opencode-v2-mcp).
-**Note:** unlike npmjs.org, GitHub Packages requires authentication even
-for public packages — you'll need a `.npmrc` with the scoped registry and
-a GitHub token with `read:packages` scope:
+## MCP configuration
 
-```bash
-# ~/.npmrc or project-local
-echo "@yuriisamohvalov-creator:registry=https://npm.pkg.github.com" >> ~/.npmrc
-npm login --registry=https://npm.pkg.github.com --scope=@yuriisamohvalov-creator
+Add timeout settings to the corresponding server in your Codex `config.toml`. Replace example paths with your actual absolute paths:
 
-npm install -g @yuriisamohvalov-creator/opencode-v2-mcp
+```toml
+[mcp_servers.opencode-v2]
+command = 'C:\Program Files\nodejs\node.exe'
+args = ['C:\tool\opencode-mcp\server.mjs']
+startup_timeout_sec = 10
+tool_timeout_sec = 960
 ```
 
-## Connecting to Claude Code
+The task timeout defaults to 900 seconds. Allow additional time for cleanup, and raise the client timeout when requesting a longer task. Reload the MCP connection or restart the client after configuration. [Codex MCP documentation](https://learn.chatgpt.com/docs/extend/mcp?surface=cli).
 
-```bash
-NODE_BIN="$(which node)"
-claude mcp add --scope user opencode-v2 -- "$NODE_BIN" "$HOME/tools/opencode-mcp/server.mjs"
-```
-
-If outbound network access (cloud model providers) needs to go through a
-proxy, pass it as environment variables at registration time — they are
-inherited by the spawned `opencode` child process:
-
-```bash
-claude mcp add --scope user opencode-v2 \
-  -e HTTPS_PROXY=http://127.0.0.1:10808 -e HTTP_PROXY=http://127.0.0.1:10808 \
-  -- "$NODE_BIN" "$HOME/tools/opencode-mcp/server.mjs"
-```
-
-Check:
-
-```bash
-claude mcp get opencode-v2
-# Status: ✔ Connected
-```
-
-After starting a new Claude Code session (or restarting the current one),
-the tool is available as `mcp__opencode-v2__opencode_execute`.
-
-## Connecting to Codex CLI
-
-```bash
-NODE_BIN="$(which node)"
-codex mcp add opencode-v2 \
-  --env HTTPS_PROXY=http://127.0.0.1:10808 --env HTTP_PROXY=http://127.0.0.1:10808 \
-  -- "$NODE_BIN" "$HOME/tools/opencode-mcp/server.mjs"
-codex mcp list   # should show opencode-v2 as enabled
-```
-
-**Important:** by default Codex blocks MCP tool calls behind its approval
-policy even when `approval` is set to `never` — this is a Codex quirk, not
-a wrapper issue. Run with `--approve-for-me` (a safe mode routed through
-the `workspace-write` sandbox, not
-`--dangerously-bypass-approvals-and-sandbox`):
-
-```bash
-codex exec --approve-for-me "Use the opencode-v2 MCP tool opencode_execute with cwd=/path/to/project, agent=claude-worker, task='...'"
-```
-
-If you run `codex exec` outside a git repository, add
-`--skip-git-repo-check` as well.
-
-## Connecting to Cursor-agent
-
-Cursor has no CLI command to add an MCP server — edit the config file
-directly: `~/.cursor/mcp.json` (global) or `.cursor/mcp.json` in a
-specific project. The format is identical to Claude Code/Codex:
+Other clients can use a standard configuration like:
 
 ```json
 {
   "mcpServers": {
     "opencode-v2": {
-      "command": "/absolute/path/to/node",
-      "args": ["/absolute/path/to/opencode-mcp/server.mjs"],
-      "env": {
-        "HTTPS_PROXY": "http://127.0.0.1:10808",
-        "HTTP_PROXY": "http://127.0.0.1:10808"
-      }
+      "command": "C:\\Program Files\\nodejs\\node.exe",
+      "args": ["C:\\tool\\opencode-mcp\\server.mjs"]
     }
   }
 }
 ```
 
-After editing the file, the server needs explicit approval:
+The bridge searches the Windows npm `@opencode/cli/bin/opencode.exe` location, the user's `.opencode/bin`, and `PATH`. If discovery fails, configure an absolute **native executable** path:
 
-```bash
-cursor-agent mcp list             # should show opencode-v2
-cursor-agent mcp enable opencode-v2
+```toml
+[mcp_servers.opencode-v2.env]
+OPENCODE_BIN = 'C:\path\to\opencode.exe'
 ```
 
-Non-interactive usage:
+For a Windows npm installation, try `Join-Path $env:APPDATA 'npm\node_modules\@opencode\cli\bin\opencode.exe'`. Installation methods differ. `.cmd`, `.bat` and `.ps1` wrappers are rejected; TOML paths do not expand environment variables. Tasks are passed as arguments without a shell.
 
-```bash
-cursor-agent -p --output-format json --force \
-  "Use the opencode-v2 MCP tool opencode_execute with cwd=/path/to/project, agent=claude-worker, task='...'"
-```
-
-The first call after adding the server is usually noticeably slower than
-subsequent ones (cold start of the cursor session — observed ~20s vs the
-usual 6–10s for a direct `opencode` CLI call).
-
-## Project configuration — JSON agent only
-
-In the root of the project where `opencode_execute` will run, create
-`opencode.json`:
+## Read-only analysis and model selection
 
 ```json
 {
-  "$schema": "https://opencode.ai/config.json",
-  "agent": {
-    "claude-worker": {
-      "description": "Implements a bounded coding task delegated by Claude Code",
-      "mode": "primary",
-      "prompt": "You are an implementation worker. Work only inside the current project. Make the smallest coherent change. Run relevant tests. Never commit, push, or delete broad paths. End with a concise summary."
-    }
-  }
+  "task": "Read the main directories and entry files. Summarize the architecture; skip dependencies, generated output and sensitive files.",
+  "cwd": "/absolute/path/to/example-app",
+  "model": "your-provider/your-model",
+  "readOnly": true,
+  "timeoutMs": 120000
 }
 ```
 
-**Do not use markdown agent files** (`.opencode/agent/<name>.md`) — on the
-installed `opencode v2.0.12` they cause `opencode run` to hang
-indefinitely without a single line of output, reproduced repeatedly with
-different frontmatter content. A JSON agent defined in `opencode.json`
-works reliably.
+`cwd` must exist and be absolute. Both process cwd and `PWD` are set. A private standalone server uses a temporary reader agent that permits read/search and denies edits, shell, subagents, external directories, network and other tools.
 
-## Using the tool
+Use the complete configured `provider/model` ID. The bridge forwards it as `--model`; when omitted, OpenCode's own selection logic applies. Unavailable models return an error rather than a guaranteed fallback. [OpenCode model documentation](https://opencode.ai/docs/models/).
 
-```jsonc
+The requested model identifies intent. Verify execution by checking the provider/model in OpenCode's saved session and assistant messages using the returned `sessionID`. This bridge does not automatically query the session database or claim a requested model was independently verified. A model's display label may differ from its request ID.
+
+## Write tasks
+
+Set `readOnly=false` explicitly for authorized edits and command execution:
+
+```json
 {
-  "task": "Add a slugify() helper in src/lib/slug.ts with tests. Acceptance: kebab-case, trims whitespace. Verify with `npm test -- slug`.",
-  "cwd": "/absolute/path/to/project",
-  "agent": "claude-worker",
-  "model": "openai/gpt-5.5",       // optional, provider/model
-  "timeoutMs": 900000               // optional, defaults to 15 minutes
+  "task": "Fix only the specified module, run the authorized tests, and report the changes and verification results.",
+  "cwd": "/absolute/path/to/example-app",
+  "model": "your-provider/your-model",
+  "readOnly": false,
+  "autoApprove": true,
+  "timeoutMs": 300000
 }
 ```
 
-Response:
+`autoApprove` defaults to `false`. When enabled it adds `--auto`, allowing actions not explicitly denied by OpenCode. Explicit read-only denials remain effective. Write mode uses the configured default agent unless `agent` is supplied. A noninteractive CLI cannot answer permission prompts; define the allowed task scope before execution.
 
-```jsonc
-{
-  "ok": true,
-  "exitCode": 0,
-  "sessionID": "ses_...",
-  "text": "...model's final answer...",
-  "diffStat": "...git diff --stat...",
-  "statusShort": "...git status --short..."
-}
+## Parameters and result
+
+| Parameter | Default | Meaning |
+| --- | --- | --- |
+| `task` | Required | At least 10 characters; cannot start with `-` |
+| `cwd` | Required | Existing absolute directory |
+| `model` | Unspecified | Configured OpenCode `provider/model` ID |
+| `readOnly` | `true` | Read/search permissions |
+| `autoApprove` | `false` | Approve actions not explicitly denied |
+| `standalone` | `true` | Private server; required in read-only mode |
+| `agent` | Unspecified | Write-mode agent; read mode uses a dedicated reader |
+| `timeoutMs` | `900000` | 1000–3600000 ms; below the client timeout |
+| `sessionId` | Unspecified | Unsupported; supplying it returns an error |
+| `continueSession` | `false` | Must remain `false` |
+
+Each call creates a new session. OpenCode 2.0.22 can resume with a previous session's directory and permissions, overriding the requested scope, so continuation is rejected.
+
+The JSON report includes `ok`, `error`, `text`, `sessionID`, `exitCode`, `readOnly`, timeout/cancellation flags, Git context and `stderrTail`. Provider errors, nonzero exits, timeout, cancellation, event overflow or no text yield MCP `isError=true`. UTF-8/NDJSON is buffered across chunks and final lines need no trailing newline.
+
+Limits: one million characters per event line, 12000 response-text characters, and a 4000-character stderr tail. Truncation is marked. Git status includes pre-existing changes. `ok=true` confirms process/output checks, not task quality; callers must review results independently. Timeout and cancellation terminate the owned process tree, using `taskkill /T /F` on Windows.
+
+## Permissions and data
+
+Read-only settings are temporary `OPENCODE_CONFIG_CONTENT` permissions, not an OS sandbox. OpenCode still writes its logs, session database and possible snapshots. Users manage local plugins and untrusted configuration.
+
+Files read by OpenCode may be sent to the selected model provider. The tool does not automatically detect every secret; explicitly exclude credentials, private keys and unnecessary business data. Common server passwords and Bearer credentials are redacted from returned text, but redaction is not exhaustive. Users manage provider authorization and costs.
+
+## Tests and contributions
+
+```sh
+npm ci --ignore-scripts
+npm test
+npm pack --dry-run
 ```
 
-## Known ecosystem bugs, fixed in this wrapper
+A live test is opt-in and may incur API costs. It reads only a generated temporary fixture:
 
-The reference implementation this is based on did not work out of the box
-against `opencode v2.0.12`. Three root causes and their fixes:
+```sh
+npm run test:live -- your-provider/your-model
+```
 
-1. **Missing `--auto` flag.** Without it, `opencode` cannot approve
-   edit/shell permissions non-interactively — added unconditionally in
-   `runOpenCode()`.
-2. **`spawn("opencode", ...)` without an absolute path.** GUI applications
-   (including Claude Code Desktop) don't always inherit the user's `PATH`
-   where `opencode` is installed — switched to an absolute path to the
-   binary. **Check and adjust the path in `server.mjs`**
-   (`spawn("/home/USER/.opencode/bin/opencode", ...)`) for your own
-   install — `which opencode` will tell you the right path.
-3. **`opencode v2` resolves the active project via the `$PWD` environment
-   variable, not the process's real `cwd`.** Node's
-   `child_process.spawn()` correctly changes the OS-level `cwd` of the
-   child process, but does NOT update `PWD` in its `env` — without an
-   explicit `env: { ...process.env, PWD: input.cwd }`, `opencode` fails
-   to find the agent defined in `opencode.json` and errors with
-   `"Agent not found"`. This isn't specific to this wrapper — the bug
-   applies to any Node/Bun wrapper around `opencode run` that uses
-   `spawn()` with a `cwd`.
-
-## Limitations
-
-- One task = one `opencode run` invocation, no parallelism within a
-  single tool call.
-- The tool does not validate OpenCode's `permission` configuration
-  itself — if the agent denies a needed command, `opencode run` exits
-  without changes and with empty `text`; check `stderrTail`/`exitCode`
-  in the response.
-- Does not replace review: the caller must independently check
-  `diffStat`/`statusShort` and test results, not trust the `ok` field
-  alone.
-
-## Related packages
-
-The same synchronous pattern (one blocking MCP tool, no separate
-check/kill) is also applied to the other three steps of the delegation
-chain:
-
-- [`codex-cli-sync-mcp`](https://github.com/yuriisamohvalov-creator/codex-mcp) —
-  the same kind of wrapper around Codex CLI (`codex exec`).
-- [`cline-sync-mcp`](https://github.com/yuriisamohvalov-creator/cline-mcp) —
-  the same kind of wrapper around Cline CLI (`cline`).
-- [`cursor-agent-sync-mcp`](https://github.com/yuriisamohvalov-creator/cursor-mcp) —
-  the same kind of wrapper around the Cursor-agent CLI (`cursor-agent -p`).
-
-## License
-
-[MIT](LICENSE)
+CI never runs the live test. See [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md) and [compatibility notes](docs/windows-adaptation-design.md).

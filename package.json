@@ -1,11 +1,11 @@
 {
   "name": "opencode2-mcp",
-  "version": "0.2.0",
-  "description": "MCP server that lets Claude Code, Codex CLI, Cursor-agent (or any MCP client) delegate bounded coding tasks to a local OpenCode v2.x instance",
+  "version": "0.3.0",
+  "description": "MCP server that delegates bounded tasks to local OpenCode 2, with portable execution and read-only project analysis",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/yuriisamohvalov-creator/opencode-mcp.git"
+    "url": "git+https://github.com/liuxiaofengone/opencode-mcp.git"
   },
   "type": "module",
   "main": "server.mjs",
@@ -14,15 +14,32 @@
   },
   "files": [
     "server.mjs",
+    "src",
+    "scripts",
     "README.md",
     "README.en.md",
-    "LICENSE"
+    "README.zh-CN.md",
+    "LICENSE",
+    "NOTICE.md",
+    "CHANGELOG.md",
+    "CONTRIBUTING.md",
+    "SECURITY.md",
+    "docs"
   ],
   "scripts": {
-    "start": "node server.mjs"
+    "start": "node server.mjs",
+    "test": "node --test test/server.test.mjs test/events.test.mjs test/runner.test.mjs",
+    "test:live": "node scripts/smoke.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
     "zod": "^4.6.5"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "homepage": "https://github.com/liuxiaofengone/opencode-mcp#readme",
+  "bugs": {
+    "url": "https://github.com/liuxiaofengone/opencode-mcp/issues"
   }
 }

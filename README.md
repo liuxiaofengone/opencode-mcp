@@ -1,265 +1,184 @@
-# opencode-v2-mcp
+# OpenCode 2 MCP
 
-*[English version](README.en.md)*
+[English](README.en.md) · [MIT License](LICENSE) · [更新记录](CHANGELOG.md)
 
-[![npm (npmjs.org)](https://img.shields.io/npm/v/opencode2-mcp?label=npmjs.org&color=cb3837)](https://www.npmjs.com/package/opencode2-mcp)
-[![GitHub Packages](https://img.shields.io/badge/GitHub%20Packages-%40yuriisamohvalov--creator%2Fopencode--v2--mcp-24292e?logo=github)](https://github.com/yuriisamohvalov-creator/opencode-mcp/pkgs/npm/opencode-v2-mcp)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+让 Codex 或其他支持 MCP 的客户端调用本机 OpenCode 2，执行项目分析与有明确范围的开发任务。服务使用 stdio，提供一个工具：`opencode_execute`。
 
-MCP-сервер, который позволяет **Claude Code, Codex CLI, Cursor-agent** (или
-любому другому MCP-клиенту) делегировать выполнение ограниченных задач по
-написанию кода локальному [OpenCode](https://opencode.ai) **v2.x**. Один
-инструмент — `opencode_execute` — запускает `opencode run --format json`,
-парсит NDJSON-вывод и возвращает компактный отчёт: текст ответа,
-`git diff --stat`, `git status --short`, код возврата и `sessionID`.
+本仓库是 [yuriisamohvalov-creator/opencode-mcp](https://github.com/yuriisamohvalov-creator/opencode-mcp) 的公开 fork，保留上游 MIT 版权和提交历史。适配内容包括 Windows 原生程序发现、默认只读权限、输出解析、错误识别及任务清理，详见 [NOTICE](NOTICE.md)。
 
-Сервер реализован через стандартный `@modelcontextprotocol/sdk`
-(stdio-транспорт) — он не завязан на конкретного клиента и работает
-одинаково с любым MCP-совместимым хостом без каких-либо доработок кода.
-Подключение к Claude Code, Codex CLI и Cursor-agent подтверждено вживую
-(разделы ниже).
+## 功能
 
-Написан по мотивам референсной реализации из community-инструкции
-«Claude Code Desktop → OpenCode v2 как субагент-исполнитель кода» и
-доработан тремя фиксами, без которых обёртка не работает с реальной
-установкой `opencode v2.0.12` (подробности — раздел «Известные баги
-экосистемы» ниже).
+- 默认只读，允许文件读取和搜索，拒绝编辑、Shell、子代理、外部目录和网络工具。
+- 默认启动独立 OpenCode 服务器，每次使用新会话，向子进程同步 `cwd` 与 `PWD`。
+- 通过 `model` 参数显式选择已配置的 `provider/model`，不绑定某一家模型服务。
+- 使用原生可执行文件，不通过 Shell 拼接任务文本，支持含中文和空格的目录。
+- 完整解析 UTF-8/NDJSON 分片和没有末尾换行的事件；模型报错和无文本结果会作为失败返回。
+- 超时、MCP 取消或断开时结束本次启动的进程树；Windows 使用 `taskkill /T /F`。
 
-Полная история разработки, диагностики и сравнения с другими community
-MCP-обёртками (все они не работают против `opencode v2.x` по разным
-причинам) — в `second-brain/opencode-subagent-mcp.md` (личная заметка,
-не публикуется).
+## 环境要求
 
-## Требования
+- Node.js 22 或更新版本。
+- 本机已安装 OpenCode **2.x**，并已配置可用的模型服务。本桥接器曾在 Windows 上使用 OpenCode **2.0.22** 验证真实调用；其他版本请先做短测试。
+- 一个支持 stdio MCP 的客户端，例如 Codex。
 
-- **OpenCode v2.x**, установленный и доступный в `PATH` (`opencode --version`
-  должен показывать `2.x`).
-- Node.js 18+.
-- Настроенный провайдер/модель в OpenCode (`opencode auth login`,
-  `opencode auth list`).
-- Проект, где будет выполняться `opencode_execute`, должен содержать
-  `opencode.json` с **JSON-блоком `agent`** (см. ниже — markdown-агенты
-  `.opencode/agent/*.md` в этой версии зависают).
+自动测试使用假 CLI，不需要 OpenCode、模型密钥或网络。跨系统测试由 GitHub Actions 执行，结果见仓库 Actions 页面。
 
-## Установка
+## 从源码安装
 
-### Вариант 1 — из npm (npmjs.org, рекомендуется)
+Windows PowerShell：
 
-Пакет опубликован как [`opencode2-mcp`](https://www.npmjs.com/package/opencode2-mcp)
-— полностью публичный, ставится без авторизации:
+```powershell
+git clone https://github.com/liuxiaofengone/opencode-mcp.git C:\tool\opencode-mcp
+Set-Location C:\tool\opencode-mcp
+git checkout v0.3.0
+npm ci --ignore-scripts
+npm test
 
-```bash
-npm install -g opencode2-mcp
+$nodeExe = (Get-Command node).Source
+$serverScript = (Resolve-Path .\server.mjs).Path
+codex mcp add opencode-v2 -- $nodeExe $serverScript
 ```
 
-### Вариант 2 — из исходников
+Linux/macOS：
 
-```bash
-git clone git@github.com:yuriisamohvalov-creator/opencode-mcp.git ~/tools/opencode-mcp
-cd ~/tools/opencode-mcp
-npm install
+```sh
+git clone https://github.com/liuxiaofengone/opencode-mcp.git
+cd opencode-mcp
+git checkout v0.3.0
+npm ci --ignore-scripts
+npm test
+codex mcp add opencode-v2 -- "$(command -v node)" "$PWD/server.mjs"
 ```
 
-### Вариант 3 — из GitHub Packages
+本 fork 当前通过 GitHub 源码分发。npm 上的 `opencode2-mcp` 是上游包，不能据此安装本 fork 的适配版本。
 
-Тот же пакет также зеркалирован в GitHub Packages под именем
-[`@yuriisamohvalov-creator/opencode-v2-mcp`](https://github.com/yuriisamohvalov-creator/opencode-mcp/pkgs/npm/opencode-v2-mcp).
-**Важно:** в отличие от npmjs.org, GitHub Packages требует аутентификации
-даже для публичных пакетов — понадобится `.npmrc` со scoped-registry и
-GitHub-токеном с правом `read:packages`:
+## 配置客户端
 
-```bash
-# ~/.npmrc или в проекте
-echo "@yuriisamohvalov-creator:registry=https://npm.pkg.github.com" >> ~/.npmrc
-npm login --registry=https://npm.pkg.github.com --scope=@yuriisamohvalov-creator
+在自己的 Codex `config.toml` 中，为对应服务器补充超时。以下路径只是示例，请改为实际绝对路径：
 
-npm install -g @yuriisamohvalov-creator/opencode-v2-mcp
+```toml
+[mcp_servers.opencode-v2]
+command = 'C:\Program Files\nodejs\node.exe'
+args = ['C:\tool\opencode-mcp\server.mjs']
+startup_timeout_sec = 10
+tool_timeout_sec = 960
 ```
 
-## Подключение к Claude Code
+默认任务超时为 900 秒，客户端超时需要额外留出清理时间。使用更长的 `timeoutMs` 时同步增大客户端超时。配置完成后重新加载 MCP 连接，必要时重启客户端。[Codex MCP 配置文档](https://learn.chatgpt.com/docs/extend/mcp?surface=cli)。
 
-```bash
-NODE_BIN="$(which node)"
-claude mcp add --scope user opencode-v2 -- "$NODE_BIN" "$HOME/tools/opencode-mcp/server.mjs"
-```
-
-Если для выхода в интернет (облачные провайдеры моделей) нужен прокси —
-передайте его переменными окружения при регистрации, они наследуются
-дочерним процессом `opencode`:
-
-```bash
-claude mcp add --scope user opencode-v2 \
-  -e HTTPS_PROXY=http://127.0.0.1:10808 -e HTTP_PROXY=http://127.0.0.1:10808 \
-  -- "$NODE_BIN" "$HOME/tools/opencode-mcp/server.mjs"
-```
-
-Проверка:
-
-```bash
-claude mcp get opencode-v2
-# Status: ✔ Connected
-```
-
-После подключения новой сессии Claude Code (или рестарта текущей)
-инструмент `opencode_execute` доступен как `mcp__opencode-v2__opencode_execute`.
-
-## Подключение к Codex CLI
-
-```bash
-NODE_BIN="$(which node)"
-codex mcp add opencode-v2 \
-  --env HTTPS_PROXY=http://127.0.0.1:10808 --env HTTP_PROXY=http://127.0.0.1:10808 \
-  -- "$NODE_BIN" "$HOME/tools/opencode-mcp/server.mjs"
-codex mcp list   # должен показать opencode-v2 в статусе enabled
-```
-
-**Важно:** по умолчанию Codex блокирует вызовы MCP-инструментов approval-
-политикой, даже если `approval` выставлен в `never` — это особенность
-самого Codex, не обёртки. Запускайте с флагом `--approve-for-me`
-(безопасный режим через `workspace-write` sandbox, не с
-`--dangerously-bypass-approvals-and-sandbox`):
-
-```bash
-codex exec --approve-for-me "Use the opencode-v2 MCP tool opencode_execute with cwd=/path/to/project, agent=claude-worker, task='...'"
-```
-
-Если запускаете `codex exec` вне git-репозитория — понадобится ещё
-`--skip-git-repo-check`.
-
-## Подключение к Cursor-agent
-
-Cursor не предоставляет CLI-команду для добавления MCP-сервера — правьте
-конфиг-файл напрямую: `~/.cursor/mcp.json` (глобально) или
-`.cursor/mcp.json` в конкретном проекте. Формат идентичен Claude
-Code/Codex:
+其他 MCP 客户端可使用下列结构，并按其文档配置工具超时：
 
 ```json
 {
   "mcpServers": {
     "opencode-v2": {
-      "command": "/absolute/path/to/node",
-      "args": ["/absolute/path/to/opencode-mcp/server.mjs"],
-      "env": {
-        "HTTPS_PROXY": "http://127.0.0.1:10808",
-        "HTTP_PROXY": "http://127.0.0.1:10808"
-      }
+      "command": "C:\\Program Files\\nodejs\\node.exe",
+      "args": ["C:\\tool\\opencode-mcp\\server.mjs"]
     }
   }
 }
 ```
 
-После правки файла сервер нужно явно одобрить:
+程序会查找 Windows npm 的 `@opencode/cli/bin/opencode.exe`、用户目录中的 `.opencode/bin` 以及 `PATH`。如果没有找到，在 MCP 配置中设置 `OPENCODE_BIN`，指向**原生可执行文件的绝对路径**：
 
-```bash
-cursor-agent mcp list             # должен показать opencode-v2
-cursor-agent mcp enable opencode-v2
+```toml
+[mcp_servers.opencode-v2.env]
+OPENCODE_BIN = 'C:\path\to\opencode.exe'
 ```
 
-Использование в неинтерактивном режиме:
+Windows npm 安装位置通常可用 `Join-Path $env:APPDATA 'npm\node_modules\@opencode\cli\bin\opencode.exe'` 定位。不同安装方式可能不同；本桥接器拒绝 `.cmd`、`.bat`、`.ps1` 包装脚本。TOML 中的路径不会自动展开环境变量。
 
-```bash
-cursor-agent -p --output-format json --force \
-  "Use the opencode-v2 MCP tool opencode_execute with cwd=/path/to/project, agent=claude-worker, task='...'"
-```
+## 只读项目分析
 
-Первый вызов после добавления сервера обычно заметно медленнее
-последующих (холодный старт сессии cursor, наблюдалось ~20с против
-обычных 6–10с у прямого CLI-вызова `opencode`).
+在 Codex 对话中，可以说：
 
-## Конфигурация проекта — только JSON-агент
+> 请通过 OpenCode，使用我已配置的 `provider/model` 模型，只读分析当前项目的目录结构和主要入口。跳过依赖、构建产物和敏感配置。
 
-В корне проекта, где будет работать `opencode_execute`, создайте
-`opencode.json`:
+对应工具参数示例：
 
 ```json
 {
-  "$schema": "https://opencode.ai/config.json",
-  "agent": {
-    "claude-worker": {
-      "description": "Implements a bounded coding task delegated by Claude Code",
-      "mode": "primary",
-      "prompt": "You are an implementation worker. Work only inside the current project. Make the smallest coherent change. Run relevant tests. Never commit, push, or delete broad paths. End with a concise summary."
-    }
-  }
+  "task": "只读分析项目的主要目录、技术栈和入口文件。跳过依赖、构建产物及敏感文件，用中文总结。",
+  "cwd": "C:\\projects\\example-app",
+  "model": "your-provider/your-model",
+  "readOnly": true,
+  "timeoutMs": 120000
 }
 ```
 
-**Не используйте markdown-файлы агентов** (`.opencode/agent/<name>.md`) —
-в установленной `opencode v2.0.12` они приводят к зависанию `opencode run`
-без единой строки вывода, воспроизведено многократно с разным содержимым
-frontmatter. JSON-агент через `opencode.json` работает надёжно.
+`cwd` 必须是存在的绝对目录。`model` 必须是 OpenCode 中真实已配置、可用的完整 ID。模型不可用时返回错误，不保证自动替换为其他模型。
 
-## Использование инструмента
+## 模型选择与核验
 
-```jsonc
+`model` 会转换为 OpenCode CLI 的 `--model` 参数。省略后由 OpenCode 自身配置和选择逻辑决定模型，因此需要固定模型时应显式传入。[OpenCode 模型说明](https://opencode.ai/docs/models/)。
+
+请求参数表明希望使用的模型。要核验执行记录，应根据返回的 `sessionID` 查看 OpenCode 会话及 assistant 消息保存的 provider/model；桥接器当前不会自动读取会话数据库，也不会把请求模型宣称为已核验的实际模型。模型显示名称是标签，可能不同于请求 ID。
+
+## 修改任务
+
+需要编辑或执行命令时，显式设置 `readOnly=false`，并明确任务允许的文件与命令：
+
+```json
 {
-  "task": "Add a slugify() helper in src/lib/slug.ts with tests. Acceptance: kebab-case, trims whitespace. Verify with `npm test -- slug`.",
-  "cwd": "/absolute/path/to/project",
-  "agent": "claude-worker",
-  "model": "openai/gpt-5.5",       // опционально, provider/model
-  "timeoutMs": 900000               // опционально, по умолчанию 15 минут
+  "task": "仅修复指定模块的问题，运行已授权的相关测试，最后报告修改与验证结果。",
+  "cwd": "/absolute/path/to/example-app",
+  "model": "your-provider/your-model",
+  "readOnly": false,
+  "autoApprove": true,
+  "timeoutMs": 300000
 }
 ```
 
-Ответ:
+`autoApprove` 默认 `false`；设为 `true` 会添加 `--auto`，允许尚未被 OpenCode 明确拒绝的工具操作。只读模式的显式拒绝仍然有效。修改模式使用 OpenCode 的默认 agent，也可传入已配置的 `agent`。非交互 CLI 无法替用户回答权限提示；请事先确定允许的范围。
 
-```jsonc
-{
-  "ok": true,
-  "exitCode": 0,
-  "sessionID": "ses_...",
-  "text": "...финальный ответ модели...",
-  "diffStat": "...git diff --stat...",
-  "statusShort": "...git status --short..."
-}
+## 参数与返回值
+
+| 参数 | 默认值 | 说明 |
+| --- | --- | --- |
+| `task` | 必填 | 至少 10 个字符，不能以 `-` 开头 |
+| `cwd` | 必填 | 存在的绝对目录 |
+| `model` | 未指定 | OpenCode 的 `provider/model` ID |
+| `readOnly` | `true` | 文件读取/搜索权限 |
+| `autoApprove` | `false` | 自动允许未被明确拒绝的操作 |
+| `standalone` | `true` | 独立服务器；只读模式必需 |
+| `agent` | 未指定 | 修改模式的 agent；只读模式使用专用 reader |
+| `timeoutMs` | `900000` | 1000～3600000 毫秒，低于客户端超时 |
+| `sessionId` | 未指定 | 暂不支持；传入会报错 |
+| `continueSession` | `false` | 必须为 `false` |
+
+OpenCode 2.0.22 的旧会话位置和权限可能覆盖本次目录与 agent。为使本次范围明确，桥接器每次创建新会话，拒绝续接参数。
+
+MCP 返回 JSON，包含 `ok`、`error`、`text`、`sessionID`、`exitCode`、`readOnly`、`killedByTimeout`、`cancelled`、`diffStat`、`statusShort` 和 `stderrTail`。模型错误、非零退出、超时、取消、事件行溢出或无文本时返回 `isError=true`。
+
+每条事件最大 100 万字符，文本最多 12000 字符，错误输出保留末尾 4000 字符；截断状态会标记。Git 信息包含任务执行前已有的改动，不代表全部由本次任务产生。`ok=true` 表示进程和输出检查成功，任务质量仍需调用者核验。
+
+## 权限与数据
+
+只读模式通过临时 `OPENCODE_CONFIG_CONTENT` 设置 OpenCode 权限，不修改登录配置。它不是操作系统沙箱；OpenCode 仍会写入自己的日志、会话数据库与可能的快照。使用者负责管理本机插件及不可信配置。
+
+被读取的文件可能发送给所选模型服务。此工具不会自动识别所有密钥文件；任务应排除 `.env`、私钥、凭据及不需要的业务数据。输出中的常见服务器密码和 Bearer 凭据会脱敏，但不保证覆盖所有敏感内容。模型授权和费用由使用者自行管理。
+
+## 测试与贡献
+
+```sh
+npm ci --ignore-scripts
+npm test
+npm pack --dry-run
 ```
 
-## Известные баги экосистемы, исправленные в этой обёртке
+真实模型测试是显式选项，可能产生费用。它只读取自动生成的临时 fixture 文件：
 
-Референсная реализация, взятая за основу, не работала «из коробки» против
-`opencode v2.0.12`. Три причины и фиксы:
+```sh
+npm run test:live -- your-provider/your-model
+```
 
-1. **Отсутствовал флаг `--auto`.** Без него `opencode` не может
-   неинтерактивно подтверждать edit/shell-разрешения — добавлен в
-   `runOpenCode()` безусловно.
-2. **`spawn("opencode", ...)` без абсолютного пути.** GUI-приложения
-   (включая Claude Code Desktop) не всегда наследуют пользовательский
-   `PATH`, где установлен `opencode` — используется абсолютный путь к
-   бинарнику. **Проверьте и при необходимости поправьте путь в
-   `server.mjs`** (`spawn("/home/USER/.opencode/bin/opencode", ...)`) под
-   вашу установку — `which opencode` подскажет актуальный путь.
-3. **`opencode v2` резолвит текущий проект через переменную окружения
-   `$PWD`, а не через реальный `cwd` процесса.** `child_process.spawn()`
-   в Node корректно меняет OS-уровневый `cwd` дочернего процесса, но НЕ
-   обновляет `PWD` в его `env` — без явного `env: { ...process.env, PWD:
-   input.cwd }` `opencode` не находит определённого в `opencode.json`
-   агента и падает с `"Agent not found"`. Это не специфично для данной
-   обёртки — баг актуален для любой Node/Bun-обёртки вокруг `opencode run`,
-   использующей `spawn()` с `cwd`.
+自动 CI 不运行真实模型测试。贡献前阅读 [CONTRIBUTING](CONTRIBUTING.md)，安全问题按 [SECURITY](SECURITY.md) 处理。
 
-## Ограничения
+## 常见问题
 
-- Одна задача — один запуск `opencode run`, без параллелизма в рамках
-  одного вызова инструмента.
-- Инструмент не проверяет `permission`-конфигурацию OpenCode сам — если
-  агент запрещает нужную команду, `opencode run` завершится без изменений
-  и с пустым `text`; смотрите `stderrTail`/`exitCode` в ответе.
-- Не подменяет ревью: вызывающая сторона должна самостоятельно проверять
-  `diffStat`/`statusShort` и результаты тестов, а не доверять только полю
-  `ok`.
-
-## Смежные пакеты
-
-Тот же синхронный паттерн (один блокирующий MCP-тул, без отдельного
-check/kill) применён и к трём другим шагам цепочки делегирования:
-
-- [`codex-cli-sync-mcp`](https://github.com/yuriisamohvalov-creator/codex-mcp) —
-  аналогичная обёртка над Codex CLI (`codex exec`).
-- [`cline-sync-mcp`](https://github.com/yuriisamohvalov-creator/cline-mcp) —
-  аналогичная обёртка над Cline CLI (`cline`).
-- [`cursor-agent-sync-mcp`](https://github.com/yuriisamohvalov-creator/cursor-mcp) —
-  аналогичная обёртка над Cursor-agent CLI (`cursor-agent -p`).
-
-## Лицензия
-
-[MIT](LICENSE)
+- 找不到程序：设置 `OPENCODE_BIN`，确认原生执行文件存在。
+- `Model unavailable`：检查 OpenCode 配置中的 provider/model，名称不能只用显示标签。
+- 网关拒绝请求：检查该网关对 OpenCode 版本与账户的要求；本桥接器不绕过服务限制。
+- 提前超时：提高 MCP 客户端超时，确保大于 `timeoutMs` 并留出清理时间。
+- 工具不可见：核对 `node`、`server.mjs` 绝对路径和依赖，重新加载 MCP 连接。
+- 旧接口名称：本仓库的工具为 `opencode_execute`，不提供旧桥接器的 `opencode.run`。
