@@ -14,10 +14,39 @@ async function runner() {
   return module;
 }
 async function run(task, extra = {}, options = {}) {
-  return (await runner()).runOpenCode({ cwd, task, timeoutMs: 3000, ...extra }, {
+  return (await runner()).runOpenCode({ cwd, task, model: "fixture/test-model", timeoutMs: 3000, ...extra }, {
     executable: process.execPath, prefixArgs: [fixture], ...options,
   });
 }
+
+// These catch an omitted CLI --model silently selecting a catalog default.
+test("rejects a missing model before starting the CLI", async () => {
+  const result = await run("inspect-environment", { model: undefined });
+  assert.equal(result.ok, false);
+  assert.equal(result.errorCode, "MODEL_REQUIRED");
+  assert.equal(result.exitCode, undefined);
+  assert.equal(result.text, undefined);
+});
+test("rejects malformed model IDs instead of asking the CLI to choose", async () => {
+  for (const model of ["", " ", "model-only", "/model", "provider/", "provider/model extra", 42,
+    "provider/model#", "provider/#high", "pro#vider/model", "provider/model#one#two"]) {
+    const result = await run("inspect-environment", { model });
+    assert.equal(result.ok, false, String(model));
+    assert.match(result.error, /model/i);
+    assert.equal(result.exitCode, undefined);
+  }
+});
+test("forwards the exact model and variant, and reports the request on success and failure", async () => {
+  const model = "openrouter/example/cn:test-model#high";
+  const result = await run("inspect-environment", { model });
+  assert.equal(result.ok, true);
+  const report = JSON.parse(result.text);
+  assert.equal(report.args[report.args.indexOf("--model") + 1], model);
+  assert.equal(result.requestedModel, model);
+  const failure = await run("provider-error", { model });
+  assert.equal(failure.ok, false);
+  assert.equal(failure.requestedModel, model);
+});
 
 test("reads fragmented results from an actual child process", async () => {
   const result = await run("fragmented");

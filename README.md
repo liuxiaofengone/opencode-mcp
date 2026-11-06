@@ -18,7 +18,7 @@
 ## 环境要求
 
 - Node.js 22 或更新版本。
-- 本机已安装 OpenCode **2.x**，并已配置可用的模型服务。本桥接器曾在 Windows 上使用 OpenCode **2.0.22** 验证真实调用；其他版本请先做短测试。
+- 本机已安装 OpenCode **2.x**，并已配置可用的模型服务。已对 **2.2.5** 核对实际 CLI 参数和只读代理配置解析；早期 **2.0.22** 曾验证真实模型调用。静态兼容检查不替代你所选模型的短测试。
 - 一个支持 stdio MCP 的客户端，例如 Codex。
 
 自动测试使用假 CLI，不需要 OpenCode、模型密钥或网络。跨系统测试由 GitHub Actions 执行，结果见仓库 Actions 页面。
@@ -30,7 +30,7 @@ Windows PowerShell：
 ```powershell
 git clone https://github.com/liuxiaofengone/opencode-mcp.git C:\tool\opencode-mcp
 Set-Location C:\tool\opencode-mcp
-git checkout v0.3.0
+git checkout main
 npm ci --ignore-scripts
 npm test
 
@@ -44,7 +44,7 @@ Linux/macOS：
 ```sh
 git clone https://github.com/liuxiaofengone/opencode-mcp.git
 cd opencode-mcp
-git checkout v0.3.0
+git checkout main
 npm ci --ignore-scripts
 npm test
 codex mcp add opencode-v2 -- "$(command -v node)" "$PWD/server.mjs"
@@ -110,9 +110,11 @@ Windows npm 安装位置通常可用 `Join-Path $env:APPDATA 'npm\node_modules\@
 
 ## 模型选择与核验
 
-`model` 会转换为 OpenCode CLI 的 `--model` 参数。省略后由 OpenCode 自身配置和选择逻辑决定模型，因此需要固定模型时应显式传入。[OpenCode 模型说明](https://opencode.ai/docs/models/)。
+`main` 中的 0.4.0 起要求模型必填；历史标签 `v0.3.0` 不含此校验。每次必须显式传入用户已指定或规则已授权的完整 `provider/model`（可附 `#variant`），原样转换为 CLI 的 `--model`。缺失或格式错误时在启动 CLI 前拒绝，不使用全局默认值、最近模型或免费模型兜底。不确定模型时先询问，不猜测、不自动切换。[OpenCode 模型说明](https://opencode.ai/v2/docs/models/)。
 
-请求参数表明希望使用的模型。要核验执行记录，应根据返回的 `sessionID` 查看 OpenCode 会话及 assistant 消息保存的 provider/model；桥接器当前不会自动读取会话数据库，也不会把请求模型宣称为已核验的实际模型。模型显示名称是标签，可能不同于请求 ID。
+结果中的 `requestedModel` 表明希望使用的模型，不是实际执行证明。要核验执行记录，应根据返回的 `sessionID` 查看 OpenCode 会话及 assistant 消息保存的 provider/model；桥接器当前不会自动读取会话数据库，也不会把请求模型宣称为已核验的实际模型。模型显示名称是标签，可能不同于请求 ID。地区／鉴权等错误须先核对实际模型再归因。
+
+完整的项目调用约束、故障分层和升级步骤见 [委派调用指南](docs/delegation-guide.zh-CN.md)。
 
 ## 修改任务
 
@@ -137,7 +139,7 @@ Windows npm 安装位置通常可用 `Join-Path $env:APPDATA 'npm\node_modules\@
 | --- | --- | --- |
 | `task` | 必填 | 至少 10 个字符，不能以 `-` 开头 |
 | `cwd` | 必填 | 存在的绝对目录 |
-| `model` | 未指定 | OpenCode 的 `provider/model` ID |
+| `model` | 必填 | 本次明确授权的完整 `provider/model` ID，可附 `#variant` |
 | `readOnly` | `true` | 文件读取/搜索权限 |
 | `autoApprove` | `false` | 自动允许未被明确拒绝的操作 |
 | `standalone` | `true` | 独立服务器；只读模式必需 |
@@ -148,7 +150,7 @@ Windows npm 安装位置通常可用 `Join-Path $env:APPDATA 'npm\node_modules\@
 
 OpenCode 2.0.22 的旧会话位置和权限可能覆盖本次目录与 agent。为使本次范围明确，桥接器每次创建新会话，拒绝续接参数。
 
-MCP 返回 JSON，包含 `ok`、`error`、`text`、`sessionID`、`exitCode`、`readOnly`、`killedByTimeout`、`cancelled`、`diffStat`、`statusShort` 和 `stderrTail`。模型错误、非零退出、超时、取消、事件行溢出或无文本时返回 `isError=true`。
+MCP 返回 JSON，包含 `ok`、`error`、`requestedModel`、`text`、`sessionID`、`exitCode`、`readOnly`、`killedByTimeout`、`cancelled`、`diffStat`、`statusShort` 和 `stderrTail`。模型错误、非零退出、超时、取消、事件行溢出或无文本时返回 `isError=true`。
 
 每条事件最大 100 万字符，文本最多 12000 字符，错误输出保留末尾 4000 字符；截断状态会标记。Git 信息包含任务执行前已有的改动，不代表全部由本次任务产生。`ok=true` 表示进程和输出检查成功，任务质量仍需调用者核验。
 

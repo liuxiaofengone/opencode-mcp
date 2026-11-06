@@ -1,6 +1,6 @@
 {
   "name": "opencode2-mcp",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "MCP server that delegates bounded tasks to local OpenCode 2, with portable execution and read-only project analysis",
   "license": "MIT",
   "repository": {

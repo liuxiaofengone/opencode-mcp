@@ -43,7 +43,7 @@ test("MCP exposes a safe default without requiring the author's custom agent", a
     assert.equal(tool.inputSchema.properties.autoApprove?.default, false);
     assert.notEqual(tool.inputSchema.properties.agent?.default, "claude-worker");
     const failure = await client.callTool({ name: "opencode_execute", arguments: {
-      task: "Read and summarize this project", cwd: "relative-directory",
+      task: "Read and summarize this project", cwd: "relative-directory", model: "fixture/test-model",
     } });
     assert.equal(failure.isError, true);
     assert.match(failure.content[0].text, /absolute/);
@@ -68,7 +68,7 @@ for (const mode of ["abort", "disconnect"]) {
         env: { ...process.env, OPENCODE_BIN: process.execPath, TEST_CHILD_PID_FILE: pidFile },
       }));
       request = client.callTool({ name: "opencode_execute", arguments: {
-        cwd, task: "delay-tree", timeoutMs: 20000,
+        cwd, task: "delay-tree", model: "fixture/test-model", timeoutMs: 20000,
       } }, undefined, { signal: controller.signal, timeout: 25000 }).catch((error) => error);
       pid = await waitForPid(pidFile);
       if (mode === "abort") controller.abort();
@@ -83,3 +83,23 @@ for (const mode of ["abort", "disconnect"]) {
     }
   });
 }
+
+// A real MCP call with a fake CLI makes accidental model calls impossible.
+test("MCP rejects missing model without starting any CLI process", async () => {
+  const cwd = await mkdtemp(path.join(tmpdir(), "opencode-mcp-model-"));
+  const marker = path.join(cwd, "started");
+  await writeFile(path.join(cwd, "run"), `require("node:fs").writeFileSync(${JSON.stringify(marker)}, "started"); process.stdout.write(JSON.stringify({type:"text",part:{text:"unexpected default model"}})+"\\n");`);
+  const client = new Client({ name: "mcp-model-guard-test", version: "1.0.0" });
+  try {
+    await client.connect(new StdioClientTransport({ command: process.execPath,
+      args: [fileURLToPath(new URL("../server.mjs", import.meta.url))], stderr: "pipe",
+      env: { ...process.env, OPENCODE_BIN: process.execPath },
+    }));
+    const response = await client.callTool({ name: "opencode_execute", arguments: {
+      cwd, task: "Read this fixture and return one sentence",
+    } });
+    assert.equal(response.isError, true);
+    assert.match(response.content[0].text, /model/i);
+    assert.equal(await readFile(marker).then(() => true, () => false), false);
+  } finally { await client.close(); await rm(cwd, { recursive: true, force: true }); }
+});

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.0 — 2026-11-06
+
+**Breaking change:** `model` is now required on every call. Existing clients must pass an explicitly authorized model ID and reload their MCP connection. The `v0.3.0` tag retains its original behavior.
+
+- Require an explicitly authorized `model` on every MCP call; reject missing or malformed IDs before launching the CLI instead of using implicit catalog defaults.
+- Accept current V2 `provider/model#variant` syntax, including multi-segment model paths, and return `requestedModel` without claiming independent verification.
+- Add regression checks for the no-model/no-spawn boundary and exact model forwarding. Recheck CLI flags and reader-config parsing against OpenCode V2 2.2.5.
+
 ## 0.3.0 — 2026-10-08
 
 - Discover native OpenCode executables on Windows and through PATH; support `OPENCODE_BIN`.

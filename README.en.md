@@ -9,7 +9,7 @@ This is a public fork of [yuriisamohvalov-creator/opencode-mcp](https://github.c
 ## Requirements
 
 - Node.js 22 or newer.
-- An installed OpenCode **2.x** CLI and a configured, available model. Live calls were verified on Windows with **2.0.22**. Smoke-test other versions before use.
+- An installed OpenCode **2.x** CLI and a configured, available model. CLI flags and reader-config parsing were checked against **2.2.5**; earlier live calls were verified on **2.0.22**. Static compatibility checks do not replace a smoke test with your selected model.
 - An MCP client with stdio support, such as Codex.
 
 Automated tests use a fake CLI and require no model credentials, OpenCode installation or network. GitHub Actions runs a Windows/Linux/macOS matrix on Node 22 and 24; check Actions for current results.
@@ -21,7 +21,7 @@ PowerShell:
 ```powershell
 git clone https://github.com/liuxiaofengone/opencode-mcp.git C:\tool\opencode-mcp
 Set-Location C:\tool\opencode-mcp
-git checkout v0.3.0
+git checkout main
 npm ci --ignore-scripts
 npm test
 $nodeExe = (Get-Command node).Source
@@ -34,7 +34,7 @@ Linux/macOS:
 ```sh
 git clone https://github.com/liuxiaofengone/opencode-mcp.git
 cd opencode-mcp
-git checkout v0.3.0
+git checkout main
 npm ci --ignore-scripts
 npm test
 codex mcp add opencode-v2 -- "$(command -v node)" "$PWD/server.mjs"
@@ -92,9 +92,11 @@ For a Windows npm installation, try `Join-Path $env:APPDATA 'npm\node_modules\@o
 
 `cwd` must exist and be absolute. Both process cwd and `PWD` are set. A private standalone server uses a temporary reader agent that permits read/search and denies edits, shell, subagents, external directories, network and other tools.
 
-Use the complete configured `provider/model` ID. The bridge forwards it as `--model`; when omitted, OpenCode's own selection logic applies. Unavailable models return an error rather than a guaranteed fallback. [OpenCode model documentation](https://opencode.ai/docs/models/).
+Version 0.4.0 on `main` requires explicit model selection; the historical `v0.3.0` tag does not enforce this. Every call now requires a complete, explicitly authorized `provider/model` ID, optionally with `#variant`. It is forwarded unchanged as `--model`. Missing or malformed values are rejected before CLI startup. Global defaults, recent choices and free-model fallbacks are not used by the bridge. Ask for the intended ID if it has not been authorized; never guess or switch after an error. [OpenCode model documentation](https://opencode.ai/v2/docs/models/).
 
-The requested model identifies intent. Verify execution by checking the provider/model in OpenCode's saved session and assistant messages using the returned `sessionID`. This bridge does not automatically query the session database or claim a requested model was independently verified. A model's display label may differ from its request ID.
+The returned `requestedModel` identifies intent, not verified execution. Verify execution by checking the provider/model in OpenCode's saved session and assistant messages using the returned `sessionID`. This bridge does not automatically query the session database or claim a requested model was independently verified. A model's display label may differ from its request ID. Check the actual model before attributing region or authorization errors to the intended provider.
+
+See the [delegation guide (Chinese)](docs/delegation-guide.zh-CN.md) for consuming-project rules, failure triage and upgrade checks.
 
 ## Write tasks
 
@@ -119,7 +121,7 @@ Set `readOnly=false` explicitly for authorized edits and command execution:
 | --- | --- | --- |
 | `task` | Required | At least 10 characters; cannot start with `-` |
 | `cwd` | Required | Existing absolute directory |
-| `model` | Unspecified | Configured OpenCode `provider/model` ID |
+| `model` | Required | Explicitly authorized `provider/model`, optionally `#variant` |
 | `readOnly` | `true` | Read/search permissions |
 | `autoApprove` | `false` | Approve actions not explicitly denied |
 | `standalone` | `true` | Private server; required in read-only mode |
@@ -130,7 +132,7 @@ Set `readOnly=false` explicitly for authorized edits and command execution:
 
 Each call creates a new session. OpenCode 2.0.22 can resume with a previous session's directory and permissions, overriding the requested scope, so continuation is rejected.
 
-The JSON report includes `ok`, `error`, `text`, `sessionID`, `exitCode`, `readOnly`, timeout/cancellation flags, Git context and `stderrTail`. Provider errors, nonzero exits, timeout, cancellation, event overflow or no text yield MCP `isError=true`. UTF-8/NDJSON is buffered across chunks and final lines need no trailing newline.
+The JSON report includes `ok`, `error`, `requestedModel`, `text`, `sessionID`, `exitCode`, `readOnly`, timeout/cancellation flags, Git context and `stderrTail`. Provider errors, nonzero exits, timeout, cancellation, event overflow or no text yield MCP `isError=true`. UTF-8/NDJSON is buffered across chunks and final lines need no trailing newline.
 
 Limits: one million characters per event line, 12000 response-text characters, and a 4000-character stderr tail. Truncation is marked. Git status includes pre-existing changes. `ok=true` confirms process/output checks, not task quality; callers must review results independently. Timeout and cancellation terminate the owned process tree, using `taskkill /T /F` on Windows.
 

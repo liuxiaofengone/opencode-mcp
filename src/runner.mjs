@@ -7,6 +7,7 @@ import { StringDecoder } from "node:string_decoder";
 import { createEventParser } from "./events.mjs";
 
 const execFileAsync = promisify(execFile);
+export const MODEL_ID_PATTERN = /^[^/#\s]+\/[^#\s]+(?:#[^#\s]+)?$/;
 const READER_AGENT = "codex-mcp-reader";
 const READ_PERMISSIONS = Object.freeze({
   "*": "deny", read: "allow", glob: "allow", grep: "allow", list: "allow",
@@ -98,7 +99,7 @@ async function terminateTree(child) {
 
 export async function runOpenCode(input, options = {}) {
   const settings = { readOnly: true, autoApprove: false, standalone: true, timeoutMs: 900000, ...input };
-  let executable, env;
+  let executable, env, requestedModel = null;
   try {
     if (typeof settings.cwd !== "string" || !path.isAbsolute(settings.cwd)) throw new Error("cwd must be an absolute directory path");
     if (!await stat(settings.cwd).then((s) => s.isDirectory()).catch(() => false)) throw new Error("cwd directory does not exist");
@@ -109,17 +110,24 @@ export async function runOpenCode(input, options = {}) {
     // authoritative for this bounded invocation.
     if (settings.sessionId || settings.continueSession) throw new Error("Session continuation is unsupported: start a new task so cwd and current permissions control the execution");
     if (settings.readOnly && !settings.standalone) throw new Error("Read-only execution requires standalone=true to apply isolated permissions");
+    if (settings.model === undefined || settings.model === null || settings.model === "") {
+      throw Object.assign(new Error("model is required: explicitly select a configured provider/model for every task; implicit CLI defaults are disabled"), { code: "MODEL_REQUIRED" });
+    }
+    if (typeof settings.model !== "string" || !MODEL_ID_PATTERN.test(settings.model)) {
+      throw Object.assign(new Error("model must be a complete provider/model ID, optionally followed by #variant, without whitespace"), { code: "MODEL_INVALID" });
+    }
+    requestedModel = settings.model;
     env = childEnvironment(options.env ?? process.env, settings);
     executable = options.executable ?? await resolveOpenCodeExecutable(env);
     if (!path.isAbsolute(executable) || !await fileExists(executable) || /\.(cmd|bat|ps1)$/i.test(executable)) throw new Error("OpenCode executable must be an existing absolute native executable path");
-  } catch (error) { return { ok: false, error: redact(error.message), cwd: settings.cwd }; }
-  if (options.signal?.aborted) return { ok: false, cancelled: true, error: "OpenCode task cancelled", cwd: settings.cwd };
+  } catch (error) { return { ok: false, error: redact(error.message), errorCode: error.code ?? "INVALID_INPUT", requestedModel, cwd: settings.cwd }; }
+  if (options.signal?.aborted) return { ok: false, cancelled: true, error: "OpenCode task cancelled", requestedModel, cwd: settings.cwd };
   const args = [...(options.prefixArgs ?? []), "run", "--format", "json"];
   if (settings.standalone) args.push("--standalone");
   if (settings.autoApprove) args.push("--auto");
   const agent = settings.readOnly ? READER_AGENT : settings.agent;
   if (agent) args.push("--agent", agent);
-  if (settings.model) args.push("--model", settings.model);
+  args.push("--model", requestedModel);
   args.push(settings.task);
 
   return new Promise((resolve) => {
@@ -165,7 +173,7 @@ export async function runOpenCode(input, options = {}) {
       ]);
       resolve({ ok: !error, ...(error ? { error: redact(error) } : {}),
         killedByTimeout, cancelled, exitCode, signal,
-        sessionID: result.sessionID, cwd: settings.cwd, readOnly: settings.readOnly,
+        sessionID: result.sessionID, requestedModel, cwd: settings.cwd, readOnly: settings.readOnly,
         stdoutOverflow: result.stdoutOverflow, textOverflow: result.textOverflow,
         text: redact(result.text), stepFinish: result.stepFinish, diffStat, statusShort,
         stderrTail: redact(stderr).slice(-4000) });
