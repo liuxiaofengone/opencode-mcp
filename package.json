@@ -1,6 +1,6 @@
 {
   "name": "opencode2-mcp",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "MCP server that delegates bounded tasks to local OpenCode 2, with portable execution and read-only project analysis",
   "license": "MIT",
   "repository": {
@@ -28,7 +28,7 @@
   ],
   "scripts": {
     "start": "node server.mjs",
-    "test": "node --test test/server.test.mjs test/events.test.mjs test/runner.test.mjs",
+    "test": "node --test test/server.test.mjs test/events.test.mjs test/runner.test.mjs test/jobs.test.mjs",
     "test:live": "node scripts/smoke.mjs"
   },
   "dependencies": {

@@ -131,7 +131,11 @@ export async function runOpenCode(input, options = {}) {
   args.push(settings.task);
 
   return new Promise((resolve) => {
-    const parser = createEventParser();
+    const startedAt = Date.now();
+    const parser = createEventParser({ onProgress: (progress) => options.onProgress?.({
+      ...progress, elapsedMs: Date.now() - startedAt,
+      lastEventAgeMs: progress.lastEventAt === null ? null : Date.now() - progress.lastEventAt,
+    }) });
     const stderrDecoder = new StringDecoder("utf8");
     let stderr = "", spawnError = null, killedByTimeout = false, cancelled = false;
     let timer;
@@ -141,6 +145,7 @@ export async function runOpenCode(input, options = {}) {
     const abort = () => {
       if (child.exitCode !== null || child.signalCode !== null) return;
       cancelled = true;
+      clearTimeout(timer);
       void terminateTree(child);
     };
     options.signal?.addEventListener("abort", abort, { once: true });
@@ -151,6 +156,8 @@ export async function runOpenCode(input, options = {}) {
     timer.unref();
     // Handle an abort between the initial check and listener registration.
     if (options.signal?.aborted) abort();
+    options.onProgress?.({ eventCount: 0, completedToolCount: 0, lastEventType: null,
+      lastEventAt: null, elapsedMs: Date.now() - startedAt, lastEventAgeMs: null });
     child.stdout.on("data", (chunk) => parser.write(chunk));
     child.stderr.on("data", (chunk) => { stderr = (stderr + stderrDecoder.write(chunk)).slice(-8000); });
     child.on("error", (error) => { spawnError = error; });
@@ -160,6 +167,9 @@ export async function runOpenCode(input, options = {}) {
       parser.end();
       stderr += stderrDecoder.end();
       const result = parser.result();
+      const finishedAt = Date.now();
+      const progress = { ...result.progress, elapsedMs: finishedAt - startedAt,
+        lastEventAgeMs: result.progress.lastEventAt === null ? null : finishedAt - result.progress.lastEventAt };
       let error = null;
       if (spawnError) error = `Failed to spawn OpenCode: ${spawnError.message}`;
       else if (killedByTimeout) error = "OpenCode task exceeded timeout";
@@ -176,7 +186,7 @@ export async function runOpenCode(input, options = {}) {
         sessionID: result.sessionID, requestedModel, cwd: settings.cwd, readOnly: settings.readOnly,
         stdoutOverflow: result.stdoutOverflow, textOverflow: result.textOverflow,
         text: redact(result.text), stepFinish: result.stepFinish, diffStat, statusShort,
-        stderrTail: redact(stderr).slice(-4000) });
+        stderrTail: redact(stderr).slice(-4000), progress });
     });
   });
 }

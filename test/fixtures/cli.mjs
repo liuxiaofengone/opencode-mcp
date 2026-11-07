@@ -22,6 +22,9 @@ if (mode === "fragmented") {
   await new Promise((resolve) => setTimeout(resolve, 30_000));
 } else if (mode === "delay") {
   await new Promise((resolve) => setTimeout(resolve, 30_000));
+} else if (mode === "progress-delay") {
+  emit({ type: "step_start", sessionID: "ses_progress", part: { id: "step_1" } });
+  await new Promise((resolve) => setTimeout(resolve, 30_000));
 } else if (mode !== "quiet") {
   emit({ type: "text", part: { text: "OK" } });
 }

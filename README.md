@@ -2,7 +2,7 @@
 
 [English](README.en.md) · [MIT License](LICENSE) · [更新记录](CHANGELOG.md)
 
-让 Codex 或其他支持 MCP 的客户端调用本机 OpenCode 2，执行项目分析与有明确范围的开发任务。服务使用 stdio，提供一个工具：`opencode_execute`。
+让 Codex 或其他支持 MCP 的客户端调用本机 OpenCode 2，执行项目分析与有明确范围的开发任务。服务使用 stdio，提供同步执行和可轮询的异步任务工具。
 
 本仓库是 [yuriisamohvalov-creator/opencode-mcp](https://github.com/yuriisamohvalov-creator/opencode-mcp) 的公开 fork，保留上游 MIT 版权和提交历史。适配内容包括 Windows 原生程序发现、默认只读权限、输出解析、错误识别及任务清理，详见 [NOTICE](NOTICE.md)。
 
@@ -14,11 +14,13 @@
 - 使用原生可执行文件，不通过 Shell 拼接任务文本，支持含中文和空格的目录。
 - 完整解析 UTF-8/NDJSON 分片和没有末尾换行的事件；模型报错和无文本结果会作为失败返回。
 - 超时、MCP 取消或断开时结束本次启动的进程树；Windows 使用 `taskkill /T /F`。
+- 长任务可通过 `opencode_start` 启动，用 `opencode_status` 轮询，并用 `opencode_cancel` 精确取消，避免单次 MCP 请求超时造成重复派发。
+- 结果包含事件数量、已完成工具数、最近事件类型、总耗时和静默时长，便于区分模型推理、工具执行与无事件等待。
 
 ## 环境要求
 
 - Node.js 22 或更新版本。
-- 本机已安装 OpenCode **2.x**，并已配置可用的模型服务。已对 **2.2.5** 核对实际 CLI 参数和只读代理配置解析；早期 **2.0.22** 曾验证真实模型调用。静态兼容检查不替代你所选模型的短测试。
+- 本机已安装 OpenCode **2.x**，并已配置可用的模型服务。已对 **2.2.6** 核对实际 CLI 参数、会话导出命令和只读代理配置解析；早期 **2.0.22** 曾验证真实模型调用。静态兼容检查不替代你所选模型的短测试。
 - 一个支持 stdio MCP 的客户端，例如 Codex。
 
 自动测试使用假 CLI，不需要 OpenCode、模型密钥或网络。跨系统测试由 GitHub Actions 执行，结果见仓库 Actions 页面。
@@ -64,7 +66,7 @@ startup_timeout_sec = 10
 tool_timeout_sec = 960
 ```
 
-默认任务超时为 900 秒，客户端超时需要额外留出清理时间。使用更长的 `timeoutMs` 时同步增大客户端超时。配置完成后重新加载 MCP 连接，必要时重启客户端。[Codex MCP 配置文档](https://learn.chatgpt.com/docs/extend/mcp?surface=cli)。
+默认 OpenCode 进程超时为 900 秒。短任务可使用同步 `opencode_execute`，客户端超时需要额外留出清理时间；长任务应使用异步工具，避免宿主单次工具时限成为任务总时限。配置完成后重新加载 MCP 连接，必要时重启客户端。[Codex MCP 配置文档](https://learn.chatgpt.com/docs/extend/mcp?surface=cli)。
 
 其他 MCP 客户端可使用下列结构，并按其文档配置工具超时：
 
@@ -112,7 +114,7 @@ Windows npm 安装位置通常可用 `Join-Path $env:APPDATA 'npm\node_modules\@
 
 `main` 中的 0.4.0 起要求模型必填；历史标签 `v0.3.0` 不含此校验。每次必须显式传入用户已指定或规则已授权的完整 `provider/model`（可附 `#variant`），原样转换为 CLI 的 `--model`。缺失或格式错误时在启动 CLI 前拒绝，不使用全局默认值、最近模型或免费模型兜底。不确定模型时先询问，不猜测、不自动切换。[OpenCode 模型说明](https://opencode.ai/v2/docs/models/)。
 
-结果中的 `requestedModel` 表明希望使用的模型，不是实际执行证明。要核验执行记录，应根据返回的 `sessionID` 查看 OpenCode 会话及 assistant 消息保存的 provider/model；桥接器当前不会自动读取会话数据库，也不会把请求模型宣称为已核验的实际模型。模型显示名称是标签，可能不同于请求 ID。地区／鉴权等错误须先核对实际模型再归因。
+结果中的 `requestedModel` 表明希望使用的模型，不是实际执行证明。OpenCode 2.2.6 可运行 `opencode session export --sanitize <sessionID>`，核对导出数据中 assistant 消息保存的 `providerID`、模型 `id` 和 `variant`；桥接器不会自动读取会话数据库，也不会把请求模型宣称为已核验的实际模型。模型显示名称是标签，可能不同于请求 ID。地区／鉴权等错误须先核对实际模型再归因。
 
 完整的项目调用约束、故障分层和升级步骤见 [委派调用指南](docs/delegation-guide.zh-CN.md)。
 
@@ -135,6 +137,14 @@ Windows npm 安装位置通常可用 `Join-Path $env:APPDATA 'npm\node_modules\@
 
 ## 参数与返回值
 
+短任务使用 `opencode_execute`。预计可能超过宿主单次工具时限的任务使用：
+
+1. `opencode_start` 接受与同步工具相同的执行参数，立即返回 `jobId`。
+2. `opencode_status` 接受 `jobId`，返回 `running`、`cancelling`、`completed`、`failed` 或 `cancelled`。
+3. `opencode_cancel` 只取消该 `jobId` 对应的本机进程树；随后继续查询状态，直到 `cancelled`。
+
+同一 MCP 进程最多运行 4 个异步任务，最多保留 50 个终局结果。MCP 进程重启后 job 状态不会持久化；断开会取消仍在运行的任务。一个 job 始终对应一次新 OpenCode session，不要在状态未知时重复启动相同任务。
+
 | 参数 | 默认值 | 说明 |
 | --- | --- | --- |
 | `task` | 必填 | 至少 10 个字符，不能以 `-` 开头 |
@@ -144,13 +154,13 @@ Windows npm 安装位置通常可用 `Join-Path $env:APPDATA 'npm\node_modules\@
 | `autoApprove` | `false` | 自动允许未被明确拒绝的操作 |
 | `standalone` | `true` | 独立服务器；只读模式必需 |
 | `agent` | 未指定 | 修改模式的 agent；只读模式使用专用 reader |
-| `timeoutMs` | `900000` | 1000～3600000 毫秒，低于客户端超时 |
+| `timeoutMs` | `900000` | OpenCode 进程总时限，1000～3600000 毫秒 |
 | `sessionId` | 未指定 | 暂不支持；传入会报错 |
 | `continueSession` | `false` | 必须为 `false` |
 
 OpenCode 2.0.22 的旧会话位置和权限可能覆盖本次目录与 agent。为使本次范围明确，桥接器每次创建新会话，拒绝续接参数。
 
-MCP 返回 JSON，包含 `ok`、`error`、`requestedModel`、`text`、`sessionID`、`exitCode`、`readOnly`、`killedByTimeout`、`cancelled`、`diffStat`、`statusShort` 和 `stderrTail`。模型错误、非零退出、超时、取消、事件行溢出或无文本时返回 `isError=true`。
+MCP 返回 JSON，包含 `ok`、`error`、`requestedModel`、`text`、`sessionID`、`exitCode`、`readOnly`、`killedByTimeout`、`cancelled`、`diffStat`、`statusShort`、`stderrTail` 和 `progress`。`progress` 包含 `eventCount`、`completedToolCount`、`lastEventType`、`elapsedMs` 与 `lastEventAgeMs`。模型错误、非零退出、超时、取消、事件行溢出或无文本时返回 `isError=true`。
 
 每条事件最大 100 万字符，文本最多 12000 字符，错误输出保留末尾 4000 字符；截断状态会标记。Git 信息包含任务执行前已有的改动，不代表全部由本次任务产生。`ok=true` 表示进程和输出检查成功，任务质量仍需调用者核验。
 
@@ -181,6 +191,6 @@ npm run test:live -- your-provider/your-model
 - 找不到程序：设置 `OPENCODE_BIN`，确认原生执行文件存在。
 - `Model unavailable`：检查 OpenCode 配置中的 provider/model，名称不能只用显示标签。
 - 网关拒绝请求：检查该网关对 OpenCode 版本与账户的要求；本桥接器不绕过服务限制。
-- 提前超时：提高 MCP 客户端超时，确保大于 `timeoutMs` 并留出清理时间。
+- 提前超时：短任务可提高客户端时限；长任务使用 `opencode_start` 并轮询，不要因一次等待超时重新派发。
 - 工具不可见：核对 `node`、`server.mjs` 绝对路径和依赖，重新加载 MCP 连接。
-- 旧接口名称：本仓库的工具为 `opencode_execute`，不提供旧桥接器的 `opencode.run`。
+- 旧接口名称：本仓库提供 `opencode_execute`、`opencode_start`、`opencode_status`、`opencode_cancel`，不提供旧桥接器的 `opencode.run`。

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.0 — 2026-11-07
+
+- Add `opencode_start`, `opencode_status` and `opencode_cancel` for long tasks that must outlive one MCP request timeout.
+- Keep asynchronous work in one new OpenCode session and reject duplicate background work above four active jobs.
+- Retain at most 50 terminal job results in the MCP process and cancel owned process trees when the bridge disconnects.
+- Report event count, completed tool count, last event type, elapsed time and silence age on synchronous and asynchronous results.
+- Recheck CLI flags and session export syntax against OpenCode V2 2.2.6.
+
 ## 0.4.0 — 2026-11-06
 
 **Breaking change:** `model` is now required on every call. Existing clients must pass an explicitly authorized model ID and reload their MCP connection. The `v0.3.0` tag retains its original behavior.

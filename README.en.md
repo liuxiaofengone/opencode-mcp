@@ -2,14 +2,14 @@
 
 [中文](README.md) · [MIT License](LICENSE) · [Changelog](CHANGELOG.md)
 
-A stdio MCP bridge that lets Codex and other MCP clients run bounded tasks through a local OpenCode 2 installation. It exposes one tool: `opencode_execute`.
+A stdio MCP bridge that lets Codex and other MCP clients run bounded tasks through a local OpenCode 2 installation. It supports synchronous execution and pollable background jobs.
 
 This is a public fork of [yuriisamohvalov-creator/opencode-mcp](https://github.com/yuriisamohvalov-creator/opencode-mcp). It preserves the upstream MIT license and history, adding native Windows executable discovery, read-only defaults, robust event parsing, error handling and process cleanup. See [NOTICE.md](NOTICE.md).
 
 ## Requirements
 
 - Node.js 22 or newer.
-- An installed OpenCode **2.x** CLI and a configured, available model. CLI flags and reader-config parsing were checked against **2.2.5**; earlier live calls were verified on **2.0.22**. Static compatibility checks do not replace a smoke test with your selected model.
+- An installed OpenCode **2.x** CLI and a configured, available model. CLI flags, session export syntax and reader-config parsing were checked against **2.2.6**; earlier live calls were verified on **2.0.22**. Static compatibility checks do not replace a smoke test with your selected model.
 - An MCP client with stdio support, such as Codex.
 
 Automated tests use a fake CLI and require no model credentials, OpenCode installation or network. GitHub Actions runs a Windows/Linux/macOS matrix on Node 22 and 24; check Actions for current results.
@@ -54,7 +54,7 @@ startup_timeout_sec = 10
 tool_timeout_sec = 960
 ```
 
-The task timeout defaults to 900 seconds. Allow additional time for cleanup, and raise the client timeout when requesting a longer task. Reload the MCP connection or restart the client after configuration. [Codex MCP documentation](https://learn.chatgpt.com/docs/extend/mcp?surface=cli).
+The OpenCode process timeout defaults to 900 seconds. Use synchronous `opencode_execute` for short tasks. Use the asynchronous tools for long tasks so one MCP request timeout does not become the task deadline. Reload the MCP connection or restart the client after configuration. [Codex MCP documentation](https://learn.chatgpt.com/docs/extend/mcp?surface=cli).
 
 Other clients can use a standard configuration like:
 
@@ -94,7 +94,7 @@ For a Windows npm installation, try `Join-Path $env:APPDATA 'npm\node_modules\@o
 
 Version 0.4.0 on `main` requires explicit model selection; the historical `v0.3.0` tag does not enforce this. Every call now requires a complete, explicitly authorized `provider/model` ID, optionally with `#variant`. It is forwarded unchanged as `--model`. Missing or malformed values are rejected before CLI startup. Global defaults, recent choices and free-model fallbacks are not used by the bridge. Ask for the intended ID if it has not been authorized; never guess or switch after an error. [OpenCode model documentation](https://opencode.ai/v2/docs/models/).
 
-The returned `requestedModel` identifies intent, not verified execution. Verify execution by checking the provider/model in OpenCode's saved session and assistant messages using the returned `sessionID`. This bridge does not automatically query the session database or claim a requested model was independently verified. A model's display label may differ from its request ID. Check the actual model before attributing region or authorization errors to the intended provider.
+The returned `requestedModel` identifies intent, not verified execution. With OpenCode 2.2.6, run `opencode session export --sanitize <sessionID>` and inspect the assistant message's `providerID`, model `id` and `variant`. This bridge does not automatically query the session database or claim a requested model was independently verified. A model's display label may differ from its request ID. Check the actual model before attributing region or authorization errors to the intended provider.
 
 See the [delegation guide (Chinese)](docs/delegation-guide.zh-CN.md) for consuming-project rules, failure triage and upgrade checks.
 
@@ -117,6 +117,8 @@ Set `readOnly=false` explicitly for authorized edits and command execution:
 
 ## Parameters and result
 
+Use `opencode_execute` for short work. For work that may exceed the host's single-call timeout, call `opencode_start`, poll `opencode_status` until a terminal state, and call `opencode_cancel` only when the task must stop. The server permits four active background jobs and retains up to 50 terminal results. Jobs are in-memory and disappear when the MCP process restarts; disconnecting cancels active jobs. Do not start duplicate work while a job's state is unknown.
+
 | Parameter | Default | Meaning |
 | --- | --- | --- |
 | `task` | Required | At least 10 characters; cannot start with `-` |
@@ -126,13 +128,13 @@ Set `readOnly=false` explicitly for authorized edits and command execution:
 | `autoApprove` | `false` | Approve actions not explicitly denied |
 | `standalone` | `true` | Private server; required in read-only mode |
 | `agent` | Unspecified | Write-mode agent; read mode uses a dedicated reader |
-| `timeoutMs` | `900000` | 1000–3600000 ms; below the client timeout |
+| `timeoutMs` | `900000` | OpenCode process deadline, 1000–3600000 ms |
 | `sessionId` | Unspecified | Unsupported; supplying it returns an error |
 | `continueSession` | `false` | Must remain `false` |
 
 Each call creates a new session. OpenCode 2.0.22 can resume with a previous session's directory and permissions, overriding the requested scope, so continuation is rejected.
 
-The JSON report includes `ok`, `error`, `requestedModel`, `text`, `sessionID`, `exitCode`, `readOnly`, timeout/cancellation flags, Git context and `stderrTail`. Provider errors, nonzero exits, timeout, cancellation, event overflow or no text yield MCP `isError=true`. UTF-8/NDJSON is buffered across chunks and final lines need no trailing newline.
+The JSON report includes `ok`, `error`, `requestedModel`, `text`, `sessionID`, `exitCode`, `readOnly`, timeout/cancellation flags, Git context, `stderrTail` and `progress`. Progress reports event count, completed tool count, last event type, elapsed time and silence age. Provider errors, nonzero exits, timeout, cancellation, event overflow or no text yield MCP `isError=true`. UTF-8/NDJSON is buffered across chunks and final lines need no trailing newline.
 
 Limits: one million characters per event line, 12000 response-text characters, and a 4000-character stderr tail. Truncation is marked. Git status includes pre-existing changes. `ok=true` confirms process/output checks, not task quality; callers must review results independently. Timeout and cancellation terminate the owned process tree, using `taskkill /T /F` on Windows.
 

@@ -1,6 +1,6 @@
 import { StringDecoder } from "node:string_decoder";
 
-export function createEventParser({ maxLineChars = 1_000_000, maxTextChars = 12_000 } = {}) {
+export function createEventParser({ maxLineChars = 1_000_000, maxTextChars = 12_000, onProgress } = {}) {
   const decoder = new StringDecoder("utf8");
   let pending = "";
   let skipping = false;
@@ -9,12 +9,23 @@ export function createEventParser({ maxLineChars = 1_000_000, maxTextChars = 12_
   let stdoutOverflow = false;
   let sessionID = null;
   let stepFinish = null;
+  let eventCount = 0;
+  let completedToolCount = 0;
+  let lastEventType = null;
+  let lastEventAt = null;
   const errors = [];
 
   function line(value) {
     let event;
     try { event = JSON.parse(value.trim()); } catch { return; }
     if (!event || typeof event !== "object") return;
+    eventCount += 1;
+    lastEventType = typeof event.type === "string" ? event.type : "unknown";
+    lastEventAt = Date.now();
+    if ((event.type === "tool_use" || event.type === "tool") &&
+        (event.part?.state?.status === "completed" || event.state?.status === "completed")) {
+      completedToolCount += 1;
+    }
     if (typeof event.sessionID === "string") sessionID = event.sessionID;
     if (event.type === "text" && typeof event.part?.text === "string") {
       const separator = text ? "\n" : "";
@@ -30,6 +41,7 @@ export function createEventParser({ maxLineChars = 1_000_000, maxTextChars = 12_
         : error?.message ?? error?.data?.message ?? event.message ?? "OpenCode error event";
       errors.push(String(message).slice(0, 4000));
     }
+    onProgress?.({ eventCount, completedToolCount, lastEventType, lastEventAt });
   }
   function consume(value) {
     for (const part of value.split(/(?<=\n)/)) {
@@ -53,7 +65,8 @@ export function createEventParser({ maxLineChars = 1_000_000, maxTextChars = 12_
     end() { consume(decoder.end()); if (pending && !skipping) line(pending); pending = ""; return this.result(); },
     result() {
       return { text: text.trim() + (textOverflow ? "\n...[text truncated]" : ""),
-        sessionID, stepFinish, errors: [...errors], stdoutOverflow, textOverflow };
+        sessionID, stepFinish, errors: [...errors], stdoutOverflow, textOverflow,
+        progress: { eventCount, completedToolCount, lastEventType, lastEventAt } };
     },
   };
 }

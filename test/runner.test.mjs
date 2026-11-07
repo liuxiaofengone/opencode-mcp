@@ -103,6 +103,16 @@ test("terminates a timed-out task", async () => {
   assert.equal(result.ok, false);
   assert.equal(result.killedByTimeout, true);
 });
+test("reports the last observed OpenCode event when a task times out", async () => {
+  const result = await run("progress-delay", { timeoutMs: 150 });
+  assert.equal(result.ok, false);
+  assert.equal(result.killedByTimeout, true);
+  assert.equal(result.sessionID, "ses_progress");
+  assert.equal(result.progress.lastEventType, "step_start");
+  assert.equal(result.progress.eventCount, 1);
+  assert.ok(result.progress.elapsedMs >= 100);
+  assert.ok(result.progress.lastEventAgeMs >= 0);
+});
 test("cancels a task when its owner disconnects", async () => {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 150);
@@ -110,6 +120,19 @@ test("cancels a task when its owner disconnects", async () => {
     const result = await run("delay", {}, { signal: controller.signal });
     assert.equal(result.ok, false);
     assert.equal(result.cancelled, true);
+    assert.equal(result.killedByTimeout, false);
+  } finally { clearTimeout(timer); }
+});
+test("reports waiting for the first event after the process starts", async () => {
+  const progress = [];
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 150);
+  try {
+    const result = await run("delay", {}, { signal: controller.signal,
+      onProgress: (value) => progress.push(value) });
+    assert.equal(result.cancelled, true);
+    assert.equal(progress[0].lastEventType, null);
+    assert.equal(progress[0].eventCount, 0);
   } finally { clearTimeout(timer); }
 });
 test("does not return printed server credentials", async () => {
